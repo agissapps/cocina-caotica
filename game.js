@@ -1,7 +1,7 @@
 // Cocina Caótica · Zairene y el Palomito
 // Juego cooperativo pixel art para 2 jugadores en línea (WebRTC con PeerJS).
 'use strict';
-const VERSION = 'v3 · 21 nov';   // cambia en cada actualización
+const VERSION = 'v4 · 21 nov';   // cambia en cada actualización
 document.getElementById('ver').textContent = VERSION;
 
 /* ======================= CONSTANTES ======================= */
@@ -384,7 +384,7 @@ function sendPos() {
 function closeNet() {
   try { conn && conn.close(); } catch (e) { }
   try { peer && peer.destroy(); } catch (e) { }
-  conn = null; peer = null;
+  conn = null; peer = null; roomJoined = '';
 }
 function hostRoom() {
   if (!window.Peer) { setStatus('No cargó la conexión. Revisa tu internet.'); return; }
@@ -401,19 +401,23 @@ function hostRoom() {
     setPhase('lobby');
   });
   peer.on('connection', c => {
-    if (conn && conn.open) { c.on('open', () => { c.send({ t: 'full' }); setTimeout(() => c.close(), 300); }); return; }
-    conn = c;
+    // Una conexión nueva reemplaza a la anterior (así el invitado puede reconectarse a media partida)
     c.on('open', () => {
+      const old = conn; conn = c; lastRecvGuest = performance.now();
+      if (old && old !== c) { try { old.close(); } catch (e) { } }
       const other = myChar === 'z' ? 'p' : 'z';
-      players[1] = newPlayer(other, 1); players[1].dx = players[1].x; players[1].dy = players[1].y;
-      c.send({ t: 'hello', ch: other, host: myChar });
-      lobbyStatus('¡' + nameOf(other) + ' se conectó! ♥');
-      document.getElementById('bStart').classList.remove('hidden');
+      const resume = !!players[1] && phase !== 'lobby';
+      if (!players[1]) { players[1] = newPlayer(other, 1); players[1].dx = players[1].x; players[1].dy = players[1].y; }
+      c.send({ t: 'hello', ch: other, host: myChar, resume });
+      if (phase === 'lobby') {
+        lobbyStatus('¡' + nameOf(other) + ' se conectó! ♥');
+        document.getElementById('bStart').classList.remove('hidden');
+      }
       play('ding');
     });
-    c.on('data', d => onHostData(d));
-    c.on('close', () => onGuestLeft());
-    c.on('error', () => onGuestLeft());
+    c.on('data', d => { if (c === conn) { lastRecvGuest = performance.now(); onHostData(d); } });
+    c.on('close', () => onGuestLeft(c));
+    c.on('error', () => onGuestLeft(c));
   });
   peer.on('error', err => {
     if (err.type === 'unavailable-id') { hostRoom(); return; }
@@ -422,11 +426,12 @@ function hostRoom() {
   });
   peer.on('disconnected', () => { try { peer.reconnect(); } catch (e) { } });
 }
-function onGuestLeft() {
-  if (!conn) return;
-  conn = null; players.length = 1;
-  if (phase !== 'menu') {
-    setPhase('lobby');
+function onGuestLeft(c) {
+  if (c !== conn) return;          // era una conexión vieja ya reemplazada
+  conn = null;
+  // Durante la partida no cortamos: su chef se queda quieto y esperamos a que se reconecte
+  if (phase === 'lobby') {
+    players.length = 1;
     lobbyStatus('Tu pareja se desconectó. Esperando que vuelva…');
     document.getElementById('bStart').classList.add('hidden');
   }
@@ -439,37 +444,68 @@ function onHostData(d) {
   else if (d.t === 'rtt') rtt = d.v;
   else if (d.t === 'again' && phase === 'end') startRound();
 }
+let roomJoined = '', lastRecv = 0, lastRecvGuest = 0, reconnecting = 0, reconnectStart = 0;
 function joinRoom(code) {
   code = (code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (code.length !== 4) { setStatus('Escribe el código de 4 letras'); return; }
   if (!window.Peer) { setStatus('No cargó la conexión. Revisa tu internet.'); return; }
   closeNet(); isHost = false; solo = false; myIdx = 1; seenRound = -1; players = [];
+  roomJoined = ''; reconnecting = 0;
   setStatus('Conectando…');
   peer = new Peer({ debug: 0 });
   let opened = false;
   const timer = setTimeout(() => { if (!opened) { setStatus('No pude conectar. ¿El código es correcto?'); closeNet(); } }, 15000);
   peer.on('open', () => {
     const c = peer.connect(ROOM_PREFIX + code, { reliable: true, serialization: 'json' });
-    conn = c;
-    c.on('open', () => { opened = true; clearTimeout(timer); });
-    c.on('data', d => {
-      if (d.t === 'hello') {
-        myChar = d.ch;
-        document.getElementById('hostBox').classList.add('hidden');
-        document.getElementById('bStart').classList.add('hidden');
-        lobbyStatus('¡Conectado! Eres ' + nameOf(d.ch) + '. Esperando a que ' + nameOf(d.host) + ' empiece…');
-        setPhase('lobby'); play('ding');
-      } else if (d.t === 's') applySnap(d);
-      else if (d.t === 'pong') { rtt = Math.round(performance.now() - d.ts); c.send({ t: 'rtt', v: rtt }); }
-      else if (d.t === 'full') { setStatus('Esa sala ya está llena'); }
-    });
-    c.on('close', () => { if (phase !== 'menu') { setPhase('menu'); setStatus('Se perdió la conexión 💔'); } closeNet(); });
+    c.on('open', () => { opened = true; clearTimeout(timer); roomJoined = code; });
+    bindGuestConn(c);
   });
+  peer.on('disconnected', () => { try { peer.reconnect(); } catch (e) { } });
   peer.on('error', err => {
+    if (roomJoined) { reconnecting = 0; return; }   // ya estábamos jugando: el vigilante reintenta
     clearTimeout(timer);
     setStatus(err.type === 'peer-unavailable' ? 'No encontré esa sala 🤔' : 'Error de conexión: ' + err.type);
     if (phase !== 'menu') setPhase('menu');
   });
+}
+function bindGuestConn(c) {
+  conn = c; lastRecv = performance.now();
+  c.on('data', d => {
+    if (c !== conn) return;
+    lastRecv = performance.now(); reconnecting = 0; reconnectStart = 0;
+    if (d.t === 'hello') {
+      myChar = d.ch;
+      if (!d.resume) {
+        document.getElementById('hostBox').classList.add('hidden');
+        document.getElementById('bStart').classList.add('hidden');
+        lobbyStatus('¡Conectado! Eres ' + nameOf(d.ch) + '. Esperando a que ' + nameOf(d.host) + ' empiece…');
+        if (phase === 'menu') setPhase('lobby');
+        play('ding');
+      }
+    } else if (d.t === 's') applySnap(d);
+    else if (d.t === 'pong') { rtt = Math.round(performance.now() - d.ts); c.send({ t: 'rtt', v: rtt }); }
+    else if (d.t === 'full') { setStatus('Esa sala ya está llena'); }
+  });
+  c.on('close', () => { if (c === conn) lastRecv = 0; });   // el vigilante se encarga de reconectar
+}
+function guestReconnect() {
+  const now = performance.now();
+  if (reconnecting && now - reconnecting < 4000) return;   // ya hay un intento en curso
+  if (!reconnectStart) reconnectStart = now;
+  if (now - reconnectStart > 45000) {                     // 45 s sin éxito: volver al menú
+    const code = roomJoined; closeNet(); roomJoined = ''; reconnectStart = 0;
+    setPhase('menu'); setStatus('Se perdió la conexión 💔 Vuelve a unirte con ' + code);
+    $('code').value = code; return;
+  }
+  reconnecting = now;
+  try { conn && conn.close(); } catch (e) { }
+  if (!peer || peer.destroyed) { peer = new Peer({ debug: 0 }); peer.on('open', () => guestReconnectConnect()); peer.on('error', () => { reconnecting = 0; }); peer.on('disconnected', () => { try { peer.reconnect(); } catch (e) { } }); return; }
+  if (peer.disconnected) { try { peer.reconnect(); } catch (e) { } }
+  guestReconnectConnect();
+}
+function guestReconnectConnect() {
+  const c = peer.connect(ROOM_PREFIX + roomJoined, { reliable: true, serialization: 'json' });
+  bindGuestConn(c);
 }
 function startSolo() {
   closeNet(); isHost = true; solo = true; myIdx = 0;
@@ -633,6 +669,17 @@ function render(dt) {
     ctx.globalAlpha = 1;
   });
   drawHUD();
+  // avisos de conexión
+  if (!solo && (phase === 'play' || phase === 'end')) {
+    const t = performance.now();
+    let msg = '';
+    if (!isHost && t - lastRecv > 1500) msg = 'Reconectando...';
+    if (isHost && players[1] && (!conn || t - lastRecvGuest > 2500)) msg = 'Esperando a tu pareja...';
+    if (msg && Math.floor(t / 400) % 2) {
+      r(0, HUD + 2, VW, 14, 'rgba(30,18,38,.85)');
+      text(msg, VW / 2, HUD + 5, '#ffc93c', 8, 'center');
+    }
+  }
   if (phase === 'play' && countdown > 0) {
     r(0, HUD, VW, VH - HUD, 'rgba(30,18,38,.45)');
     const c = Math.ceil(countdown);
@@ -757,6 +804,8 @@ function tick() {
       if (canStream()) { if (isHost) conn.send(snapshot()); else if (phase === 'play') sendPos(); }
     } else if (isHost) sndQ = [];
   }
+  // vigilante: si el invitado deja de recibir datos, se reconecta solo
+  if (!isHost && !solo && roomJoined && (phase === 'play' || phase === 'end' || phase === 'lobby') && now - lastRecv > 3500) guestReconnect();
   // medir la señal (ida y vuelta) cada 2 s
   pingAcc += 1 / 60;
   if (!isHost && conn && conn.open && pingAcc >= 2) { pingAcc = 0; conn.send({ t: 'ping', ts: performance.now() }); }
@@ -766,7 +815,12 @@ function canStream() {
   const dc = conn.dataChannel;
   return (conn.bufferSize || 0) === 0 && (!dc || dc.bufferedAmount < 4000);
 }
-setInterval(tick, 1000 / 60);
+// Los navegadores frenan setInterval cuando la pestaña no está al frente (hasta 1 vez por minuto).
+// Un Worker no se frena, así el anfitrión sigue enviando aunque cambie de ventana.
+try {
+  const wk = new Worker(URL.createObjectURL(new Blob(['setInterval(()=>postMessage(0),16)'], { type: 'text/javascript' })));
+  wk.onmessage = tick;
+} catch (e) { setInterval(tick, 1000 / 60); }
 function loop(ts) {
   const dt = Math.min(0.05, (ts - lastR) / 1000); lastR = ts;
   render(dt);
