@@ -1,6 +1,8 @@
 // Cocina Caótica · Zairene y el Palomito
 // Juego cooperativo pixel art para 2 jugadores en línea (WebRTC con PeerJS).
 'use strict';
+const VERSION = 'v3 · 21 nov';   // cambia en cada actualización
+document.getElementById('ver').textContent = VERSION;
 
 /* ======================= CONSTANTES ======================= */
 const T = 16, HUD = 36;
