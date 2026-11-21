@@ -290,7 +290,11 @@ function doInteract() {
   ensureAudio();
   if (phase !== 'play') return;
   if (isHost) interact(players[myIdx]);
-  else if (conn && conn.open) { sendPos(); conn.send({ t: 'a' }); }
+  else if (conn && conn.open) {
+    // la acción lleva la posición exacta, así funciona aunque se hayan saltado envíos
+    const p = players[myIdx];
+    conn.send({ t: 'a', x: p.x, y: p.y, fx: p.fx, fy: p.fy });
+  }
 }
 function inputVec() {
   let x = 0, y = 0;
@@ -428,7 +432,9 @@ function onGuestLeft() {
 function onHostData(d) {
   const p = players[1]; if (!p) return;
   if (d.t === 'p') { p.x = d.x; p.y = d.y; p.fx = d.fx; p.fy = d.fy; p.chop = d.chop; p.mv = d.mv; }
-  else if (d.t === 'a') interact(p);
+  else if (d.t === 'a') { if (d.x !== undefined) { p.x = d.x; p.y = d.y; p.fx = d.fx; p.fy = d.fy; } interact(p); }
+  else if (d.t === 'ping') conn.send({ t: 'pong', ts: d.ts });
+  else if (d.t === 'rtt') rtt = d.v;
   else if (d.t === 'again' && phase === 'end') startRound();
 }
 function joinRoom(code) {
@@ -452,6 +458,7 @@ function joinRoom(code) {
         lobbyStatus('¡Conectado! Eres ' + nameOf(d.ch) + '. Esperando a que ' + nameOf(d.host) + ' empiece…');
         setPhase('lobby'); play('ding');
       } else if (d.t === 's') applySnap(d);
+      else if (d.t === 'pong') { rtt = Math.round(performance.now() - d.ts); c.send({ t: 'rtt', v: rtt }); }
       else if (d.t === 'full') { setStatus('Esa sala ya está llena'); }
     });
     c.on('close', () => { if (phase !== 'menu') { setPhase('menu'); setStatus('Se perdió la conexión 💔'); } closeNet(); });
@@ -573,6 +580,10 @@ function drawHUD() {
   text(mm + ':' + ss, VW - 4, 5, t <= 20 && Math.floor(performance.now() / 300) % 2 ? '#ff6b6b' : '#fff4e0', 8, 'right');
   ctx.drawImage(SP.coin, VW - 52, 20);
   text(String(score), VW - 4, 20, '#ffc93c', 8, 'right');
+  if (!solo && rtt >= 0) {   // indicador de señal: verde bien, amarillo regular, rojo lenta
+    const c = rtt < 150 ? '#4caf3a' : rtt < 400 ? '#ffc93c' : '#e8443a';
+    for (let i = 0; i < 3; i++) r(VW - 66 + i * 3, 27 - i * 2, 2, 3 + i * 2, (rtt < [9999, 400, 150][i]) ? c : '#5c3566');
+  }
 }
 function render(dt) {
   ctx.setTransform(S, 0, 0, S, 0, 0);
@@ -737,12 +748,21 @@ function tick() {
     if (isHost) updateEffects(step);
   }
   sendAcc += (now - (tick.prev || now)) / 1000; tick.prev = now;
-  if (sendAcc >= 0.05) {
+  if (sendAcc >= 1 / 15) {
     sendAcc = 0;
     if (conn && conn.open) {
-      if (isHost) conn.send(snapshot()); else if (phase === 'play') sendPos();
+      // si la conexión va lenta, no amontonamos mensajes viejos: se salta este envío
+      if (canStream()) { if (isHost) conn.send(snapshot()); else if (phase === 'play') sendPos(); }
     } else if (isHost) sndQ = [];
   }
+  // medir la señal (ida y vuelta) cada 2 s
+  pingAcc += 1 / 60;
+  if (!isHost && conn && conn.open && pingAcc >= 2) { pingAcc = 0; conn.send({ t: 'ping', ts: performance.now() }); }
+}
+let pingAcc = 0, rtt = -1;
+function canStream() {
+  const dc = conn.dataChannel;
+  return (conn.bufferSize || 0) === 0 && (!dc || dc.bufferedAmount < 4000);
 }
 setInterval(tick, 1000 / 60);
 function loop(ts) {
