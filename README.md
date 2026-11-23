@@ -13,10 +13,18 @@ Juego cooperativo en pixel art para **2 jugadores en línea**, para teléfono o 
 - **Laptop:** WASD / flechas para moverse · ESPACIO para agarrar o soltar · E (mantener) para picar
 - **Teléfono:** palanca para moverse · ✋ agarrar · 🔪 picar (mejor en horizontal)
 
-## Recetas
-- 🥗 Ensalada: lechuga + tomate picados
-- 🍔 Hamburguesa: pan + carne (picada y cocinada)
-- 🍔 Burger verde: pan + carne + lechuga
-- 💖 Burger del amor: pan + carne + lechuga + tomate
+## Descargarlo (PWA)
+- **Android / Chrome / Edge:** en el menú toca **Descargar el juego 📲** (o en el menú del navegador, «Instalar app»).
+- **iPhone:** abre la página en Safari y toca Compartir ⬆️ → «Agregar a inicio».
+
+Una vez descargado abre en pantalla completa y el modo práctica funciona sin internet.
+
+## Cocinas (el anfitrión elige)
+- 🍔 **Hamburguesería:** ensalada, hamburguesa, burger verde, burger del amor
+- 🌮 **Taquería México:** taco, taco con todo (cebolla + tomate), burrito (frijoles), burrito supremo
+- 🍣 **Sushi Japón:** nigiri de salmón, nigiri de camarón crudo, maki de pepino, roll especial
+- 🍝 **Trattoria Italia:** pasta pomodoro, pasta con queso, bruschetta, pasta caprese
+
+Lo que va a la estufa: carne (picada primero), frijoles, arroz y pasta. ¡Sácalo antes de que se queme!
 
 Hecho con HTML5 Canvas y [PeerJS](https://peerjs.com/) (conexión directa WebRTC, sin servidor propio).

@@ -1,33 +1,121 @@
 // Cocina Caótica · Zairene y el Palomito
 // Juego cooperativo pixel art para 2 jugadores en línea (WebRTC con PeerJS).
 'use strict';
-const VERSION = 'v4 · 21 nov';   // cambia en cada actualización
+const VERSION = 'v5 · 22 nov';   // cambia en cada actualización
 document.getElementById('ver').textContent = VERSION;
 
 /* ======================= CONSTANTES ======================= */
 const T = 16, HUD = 36;
-// . piso | C mostrador | T tomate | L lechuga | B pan | M carne
+// . piso | C mostrador | letras de cada nivel = cajas de ingredientes
 // K tabla de picar | F estufa | P platos | S ventanilla | X basura
-const MAP = [
-  'CTCLCBCMCCPCSC',
-  'C............S',
-  'K............C',
-  'K....CCCC....F',
-  'C....CCCC....F',
-  'C............F',
-  'X............C',
-  'CCKCCCCCCCPCCC',
+// Ingredientes: cómo quedan listos para el plato.
+//   raw = tal cual · chop = picado en la tabla · cook = en la estufa (pre: 'chop' si hay que picarlo antes)
+const ING = {
+  tomato: { ready: 'chop', n: 'tomate' }, lettuce: { ready: 'chop', n: 'lechuga' }, bread: { ready: 'raw', n: 'pan' },
+  meat: { ready: 'cook', pre: 'chop', n: 'carne' },
+  tortilla: { ready: 'raw', n: 'tortilla' }, onion: { ready: 'chop', n: 'cebolla' }, beans: { ready: 'cook', n: 'frijoles' },
+  rice: { ready: 'cook', n: 'arroz' }, nori: { ready: 'raw', n: 'alga' }, salmon: { ready: 'chop', n: 'salmón' },
+  shrimp: { ready: 'chop', n: 'camarón crudo' }, cucumber: { ready: 'chop', n: 'pepino' },
+  pasta: { ready: 'cook', n: 'pasta' }, cheese: { ready: 'chop', n: 'queso' }, basil: { ready: 'raw', n: 'albahaca' },
+};
+const READY = {}; for (const k in ING) READY[k] = k + '_' + ING[k].ready;
+const canChop = t => ING[t] && (ING[t].ready === 'chop' || ING[t].pre === 'chop');
+const canCook = it => ING[it.t] && ING[it.t].ready === 'cook' && !(ING[it.t].pre === 'chop' && it.s === 'raw');
+
+const LEVELS = [
+  {
+    id: 'burger', n: 'Hamburguesería', e: '🍔', sub: 'Hamburguesas y ensaladas',
+    map: [
+      'CTCLCBCMCCPCSC',
+      'C............S',
+      'K............C',
+      'K....CCCC....F',
+      'C....CCCC....F',
+      'C............F',
+      'X............C',
+      'CCKCCCCCCCPCCC',
+    ],
+    crates: { T: 'tomato', L: 'lettuce', B: 'bread', M: 'meat' },
+    recipes: [
+      { n: 'Ensalada', e: '🥗', ing: ['lettuce', 'tomato'], pts: 20, tm: 55 },
+      { n: 'Hamburguesa', e: '🍔', ing: ['bread', 'meat'], pts: 30, tm: 65 },
+      { n: 'Burger verde', e: '🍔', ing: ['bread', 'meat', 'lettuce'], pts: 40, tm: 75 },
+      { n: 'Burger del amor', e: '💖', ing: ['bread', 'meat', 'lettuce', 'tomato'], pts: 55, tm: 90 },
+    ],
+    th: { f1: '#f2d7ae', f2: '#e9cc9d', fl: '#dcbc8a', top: '#d9a066', hi: '#efc58e', lo: '#b07a46', side: '#c08850', body: '#7a4528', foot: '#5e321c' },
+  },
+  {
+    id: 'mx', n: 'Taquería México', e: '🌮', sub: 'Tacos y burritos',
+    map: [
+      'CTCOCRCMCCPCSC',
+      'C............S',
+      'K....C..C....F',
+      'K....C..C....F',
+      'C....C..C....F',
+      'J............C',
+      'X............C',
+      'CCKCCCPCCCCCCC',
+    ],
+    crates: { T: 'tomato', O: 'onion', R: 'tortilla', M: 'meat', J: 'beans' },
+    recipes: [
+      { n: 'Taco', e: '🌮', ing: ['tortilla', 'meat'], pts: 30, tm: 60 },
+      { n: 'Taco con todo', e: '🌮', ing: ['tortilla', 'meat', 'onion', 'tomato'], pts: 50, tm: 85 },
+      { n: 'Burrito', e: '🌯', ing: ['tortilla', 'meat', 'beans'], pts: 45, tm: 80 },
+      { n: 'Burrito supremo', e: '🌯', ing: ['tortilla', 'meat', 'beans', 'tomato'], pts: 60, tm: 95 },
+    ],
+    th: { f1: '#e8a46a', f2: '#d98f55', fl: '#b8703c', top: '#3f7fd0', hi: '#9cc4ff', lo: '#2a5aa0', side: '#f2e6c8', body: '#a8502a', foot: '#6e2f16' },
+  },
+  {
+    id: 'jp', n: 'Sushi Japón', e: '🍣', sub: 'Sushi y camarón crudo',
+    map: [
+      'CACNCGCWCUCPCC',
+      'F............S',
+      'F............S',
+      'C...CCCCCC...C',
+      'K............C',
+      'K............C',
+      'X............P',
+      'CCCCKCCCFCCCCC',
+    ],
+    crates: { A: 'rice', N: 'nori', G: 'salmon', W: 'shrimp', U: 'cucumber' },
+    recipes: [
+      { n: 'Nigiri salmón', e: '🍣', ing: ['rice', 'salmon'], pts: 30, tm: 60 },
+      { n: 'Nigiri camarón', e: '🍤', ing: ['rice', 'shrimp'], pts: 30, tm: 60 },
+      { n: 'Maki de pepino', e: '🍙', ing: ['nori', 'rice', 'cucumber'], pts: 40, tm: 75 },
+      { n: 'Roll especial', e: '🍱', ing: ['nori', 'rice', 'salmon', 'shrimp'], pts: 60, tm: 95 },
+    ],
+    th: { f1: '#d8cf98', f2: '#cbc184', fl: '#a99f62', top: '#f1e3c6', hi: '#fff6e2', lo: '#c9b48a', side: '#d9c7a0', body: '#3a2a26', foot: '#1d1412' },
+  },
+  {
+    id: 'it', n: 'Trattoria Italia', e: '🍝', sub: 'Pasta y bruschetta',
+    map: [
+      'CTCQCHCACBCCSC',
+      'C............S',
+      'K..CC....CC..C',
+      'K..CC....CC..F',
+      'C............F',
+      'C............F',
+      'X............C',
+      'CCKCCPCCPCCCCC',
+    ],
+    crates: { T: 'tomato', Q: 'cheese', H: 'basil', A: 'pasta', B: 'bread' },
+    recipes: [
+      { n: 'Pasta pomodoro', e: '🍝', ing: ['pasta', 'tomato'], pts: 30, tm: 60 },
+      { n: 'Pasta con queso', e: '🧀', ing: ['pasta', 'cheese'], pts: 30, tm: 60 },
+      { n: 'Bruschetta', e: '🥖', ing: ['bread', 'tomato', 'basil'], pts: 40, tm: 70 },
+      { n: 'Pasta caprese', e: '🇮🇹', ing: ['pasta', 'tomato', 'cheese', 'basil'], pts: 60, tm: 95 },
+    ],
+    th: { f1: '#f4efe6', f2: '#c8423a', fl: '#d8d0c4', top: '#e8e0d0', hi: '#ffffff', lo: '#b8ad98', side: '#cfc4b0', body: '#2f6a3a', foot: '#1d4424' },
+  },
 ];
+let levelIdx = 0, LV = LEVELS[0], MAP = LV.map, CRATE = LV.crates, RECIPES = LV.recipes;
+function setLevel(i) {
+  levelIdx = Math.max(0, Math.min(LEVELS.length - 1, i | 0));
+  LV = LEVELS[levelIdx]; MAP = LV.map; CRATE = LV.crates; RECIPES = LV.recipes;
+  if (typeof refreshLevelUI === 'function') refreshLevelUI();
+}
 const W = MAP[0].length, H = MAP.length, VW = W * T, VH = H * T + HUD;
 const ROUND_TIME = 180, SPEED = 72, ROOM_PREFIX = 'cocina-zyp-';
-const CRATE = { T: 'tomato', L: 'lettuce', B: 'bread', M: 'meat' };
-const RECIPES = [
-  { n: 'Ensalada', ing: ['lettuce', 'tomato'], pts: 20, tm: 55 },
-  { n: 'Hamburguesa', ing: ['bread', 'meat'], pts: 30, tm: 65 },
-  { n: 'Burger verde', ing: ['bread', 'meat', 'lettuce'], pts: 40, tm: 75 },
-  { n: 'Burger del amor', ing: ['bread', 'meat', 'lettuce', 'tomato'], pts: 55, tm: 90 },
-];
-const READY = { tomato: 'tomato_chop', lettuce: 'lettuce_chop', bread: 'bread_raw', meat: 'meat_cook' };
 
 /* ======================= SPRITES ======================= */
 const SP = {};
@@ -92,6 +180,37 @@ const PATTY = ['........', '........', '..mmmm..', '.mmmmmm.', 'mmmmmmmm', '.MMM
 mk('meat_chop', PATTY, PI);
 mk('meat_cook', PATTY, { ...PI, m: PI.c, M: PI.C });
 mk('meat_burn', PATTY, { ...PI, m: PI.k, M: PI.K });
+// --- México ---
+const PM = { y: '#f0d58a', Y: '#c9a24a', v: '#9b4a8f', w: '#f3dcef', g: '#4caf3a', d: '#c9b08a', b: '#c98b6a', B: '#8a5236', c: '#b8602e', C: '#7a3a1a', k: '#5a2414', K: '#3a160c' };
+mk('tortilla_raw', ['........', '..yyyy..', '.yyYyyy.', 'yyyyyyYy', 'yYyyyyyy', '.yyyyYy.', '..yyyy..', '........'], PM);
+mk('onion_raw', ['...gg...', '...vv...', '..vwwv..', '.vwvwwv.', '.vwwvwv.', '.vwvwwv.', '..vvvv..', '...dd...'], PM);
+mk('onion_chop', ['........', '.vw..wv.', 'w..vw..v', '.wv.v.w.', '...w.v..', '.vw..wv.', 'w..v...v', '........'], PM);
+mk('beans_raw', ['........', '........', '..bBbB..', '.BbBbBb.', 'bBbBbBbB', '.cccccc.', '..CCCC..', '........'], PM);
+mk('beans_cook', ['....w...', '...w....', '..kKkK..', '.KkKkKk.', 'kKkKkKkK', '.cccccc.', '..CCCC..', '........'], PM);
+// --- Japón ---
+const PJ = { w: '#fbfbf2', g: '#d8d8c8', d: '#a8201e', D: '#6a1010', n: '#1d3a24', N: '#3a6a44', s: '#ff9a6a', S: '#d86a40', o: '#ff8a5c', O: '#ffd8c4', k: '#1d1412', p: '#ffa48a', P: '#e07560', t: '#e8443a', G: '#2f7d24', l: '#c8f0a0', h: '#5fbf3f' };
+mk('rice_raw', ['........', '........', '..wgwg..', '.gwgwgw.', 'wgwgwgwg', '.dddddd.', '..DDDD..', '........'], PJ);
+mk('rice_cook', ['........', '..wwww..', '.wwwwww.', 'wwwwgwww', 'wwgwwwww', '.dddddd.', '..DDDD..', '........'], PJ);
+mk('nori_raw', ['........', '.nnnnnn.', '.nNnnNn.', '.nnnnnn.', '.nNnnnn.', '.nnnNnn.', '.nnnnnn.', '........'], PJ);
+mk('salmon_raw', ['........', '.......S', '.sssss.S', 'skssssSS', 'ssssssSS', '.SSSSS.S', '........', '........'], PJ);
+mk('salmon_chop', ['........', '.oo.oo..', 'oOOoOOo.', '.oo.oo..', '..oo.oo.', '.oOOoOOo', '..oo.oo.', '........'], PJ);
+mk('shrimp_raw', ['........', '..pppp..', '.pPpppp.', 'pp...pPp', 'p.....pp', '.....ppt', '....tt..', '........'], PJ);
+mk('shrimp_chop', ['........', '........', '.OpOpOp.', 'pOpOpOpt', '.pOpOpOt', '..pppp..', '........', '........'], PJ);
+mk('cucumber_raw', ['........', '.......G', '.....GhG', '...GhGh.', '.GhGhG..', 'GhGhG...', '.GG.....', '........'], PJ);
+mk('cucumber_chop', ['........', '.GG..GG.', 'GllGGllG', 'GllGGllG', '.GG..GG.', '...GG...', '..GllG..', '...GG...'], PJ);
+// --- Italia ---
+const PT = { y: '#f3d27a', Y: '#d8b050', r: '#e8443a', q: '#ffd84a', Q: '#e0a820', g: '#3d9a35', G: '#2a6e24', b: '#6b3d22' };
+mk('pasta_raw', ['........', '........', 'yyyyyyyy', 'YyyrryyY', 'yyyrryyy', 'yYyrryYy', '........', '........'], PT);
+mk('pasta_cook', ['........', '..yYyy..', '.yyYyYy.', 'yYyyYyyY', 'yyYyyYyy', '.yYyyyY.', '..yyYy..', '........'], PT);
+mk('cheese_raw', ['........', '.......q', '.....qqq', '...qqqQq', '.qqqQqqq', 'qqqqqqQq', 'QQQQQQQQ', '........'], PT);
+mk('cheese_chop', ['........', '.qq..qq.', '.qQ..qQ.', '...qq...', '...qQ...', '.qq..qq.', '.qQ..qQ.', '........'], PT);
+mk('basil_raw', ['........', '...gg...', '..gGgg..', '.gGgggg.', '.ggGgg..', '..ggGg..', '....b...', '........'], PT);
+// lo quemado: copia oscura de lo cocinado
+for (const k in ING) if (ING[k].ready === 'cook' && !SP[k + '_burn']) {
+  const src = SP[k + '_cook'], c = document.createElement('canvas'); c.width = src.width; c.height = src.height;
+  const x = c.getContext('2d'); x.drawImage(src, 0, 0); x.globalCompositeOperation = 'source-atop'; x.fillStyle = 'rgba(25,15,12,.82)'; x.fillRect(0, 0, c.width, c.height);
+  SP[k + '_burn'] = c;
+}
 mk('plate', ['..wwwwwwww..', '.wggggggggw.', 'wgwwwwwwwwgw', 'wgwwwwwwwwgw', '.wggggggggw.', '..wwwwwwww..'], { w: '#ffffff', g: '#b8c4d8' });
 mk('heart', ['.rr.rr.', 'rrrrrrr', 'rrrrrrr', '.rrrrr.', '..rrr..', '...r...'], { r: '#ff4f8b' });
 mk('bell', ['...yy...', '..yyyy..', '.yyyyyy.', '.yyYyyy.', 'yyyyyyyy', 'kkkkkkkk'], { y: '#ffc93c', Y: '#fff2b3', k: '#7a5a20' });
@@ -187,7 +306,7 @@ function interact(p) {
   const slot = slots[tg.k];
   if (!hand && slot) { p.hand = slot; delete slots[tg.k]; sfx('pick'); return; }
   if (hand && !slot) {
-    if (ch === 'F' && !(hand.t === 'meat' && hand.s !== 'raw')) { fxText(cx, cy, '?!', '#ff6b6b'); sfx('no'); return; }
+    if (ch === 'F' && !canCook(hand)) { fxText(cx, cy, '?!', '#ff6b6b'); sfx('no'); return; }
     if (ch === 'K' && hand.t === 'plate') { sfx('no'); return; }
     slots[tg.k] = hand; p.hand = null; sfx('drop'); return;
   }
@@ -245,10 +364,10 @@ function updateWorld(dt) {
   // estufas
   for (const k in slots) {
     const it = slots[k], [tx, ty] = k.split(',').map(Number);
-    if (tile(tx, ty) !== 'F' || it.t !== 'meat') continue;
-    if (it.s === 'chop' || it.s === 'cook') {
+    if (tile(tx, ty) !== 'F' || !canCook(it) || it.s === 'burn') continue;
+    {
       it.k += dt / 6;
-      if (it.s === 'chop' && it.k >= 1) { it.s = 'cook'; sfx('cook'); }
+      if (it.s !== 'cook' && it.k >= 1) { it.s = 'cook'; sfx('cook'); }
       else if (it.s === 'cook' && it.k >= 2.4) { it.s = 'burn'; sfx('burn'); fxText(tx * T + 4, ty * T, '!!', '#ff6b6b'); }
     }
   }
@@ -260,7 +379,7 @@ function updateWorld(dt) {
     const tg = target(p);
     if (!tg || tg.ch !== 'K') return;
     const it = slots[tg.k];
-    if (it && it.t !== 'plate' && it.t !== 'bread' && it.s === 'raw') {
+    if (it && it.t !== 'plate' && canChop(it.t) && it.s === 'raw') {
       it.p += dt / 1.6; p.chopping = true; anyChop = true;
       if (it.p >= 1) { it.s = 'chop'; it.p = 0; sfx('pick'); }
     }
@@ -354,7 +473,7 @@ let roomCode = '';
 
 function snapshot() {
   const s = {
-    t: 's', ph: phase, rid: roundId, tl: timeLeft, cd: countdown, sc: score, sv: served, fl: failed,
+    t: 's', ph: phase, lv: levelIdx, rid: roundId, tl: timeLeft, cd: countdown, sc: score, sv: served, fl: failed,
     or: orders.map(o => [o.r, +o.left.toFixed(1), o.max]),
     sl: slots, fx: effects, snd: sndQ,
     pl: players.map(p => ({ ch: p.ch, x: +p.x.toFixed(1), y: +p.y.toFixed(1), fx: +p.fx.toFixed(2), fy: +p.fy.toFixed(2), hand: p.hand, chopping: !!p.chopping, mv: p.mv })),
@@ -363,6 +482,7 @@ function snapshot() {
   return s;
 }
 function applySnap(s) {
+  if (s.lv !== undefined && s.lv !== levelIdx) setLevel(s.lv);
   timeLeft = s.tl; countdown = s.cd; score = s.sc; served = s.sv; failed = s.fl;
   orders = s.or.map(([r, left, max]) => ({ r, left, max }));
   slots = s.sl; effects = s.fx;
@@ -517,9 +637,10 @@ function startSolo() {
 const r = (x, y, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(x, y, w, h); };
 function drawTile(ch, tx, ty) {
   const X = tx * T, Y = ty * T + HUD;
-  if (ch === '.') { r(X, Y, T, T, (tx + ty) % 2 ? '#f2d7ae' : '#e9cc9d'); r(X, Y + 15, T, 1, '#dcbc8a'); return; }
+  const th = LV.th;
+  if (ch === '.') { r(X, Y, T, T, (tx + ty) % 2 ? th.f1 : th.f2); r(X, Y + 15, T, 1, th.fl); return; }
   if (ch === 'F') {
-    const it = slots[tx + ',' + ty], hot = it && it.t === 'meat' && (it.s === 'chop' || it.s === 'cook');
+    const it = slots[tx + ',' + ty], hot = it && canCook(it) && it.s !== 'burn';
     r(X, Y, T, T, '#2b2b36'); r(X, Y, T, 12, '#5e5e70'); r(X, Y, T, 1, '#8a8aa0');
     r(X + 3, Y + 2, 10, 8, '#2b2b36'); r(X + 4, Y + 3, 8, 6, hot ? '#b8401e' : '#454556');
     if (hot && Math.floor(performance.now() / 120) % 2) { r(X + 5, Y + 4, 2, 3, '#ffb02e'); r(X + 9, Y + 4, 2, 3, '#ffb02e'); }
@@ -533,8 +654,9 @@ function drawTile(ch, tx, ty) {
     return;
   }
   // mostrador base
-  r(X, Y, T, T, '#7a4528'); r(X, Y, T, 12, '#d9a066'); r(X, Y, T, 1, '#efc58e'); r(X, Y + 11, T, 1, '#b07a46'); r(X + 15, Y, 1, 12, '#c08850');
-  r(X + 2, Y + 13, 12, 1, '#5e321c');
+  r(X, Y, T, T, th.body); r(X, Y, T, 12, th.top); r(X, Y, T, 1, th.hi); r(X, Y + 11, T, 1, th.lo); r(X + 15, Y, 1, 12, th.side);
+  r(X + 2, Y + 13, 12, 1, th.foot);
+  if (LV.id === 'mx' && (tx + ty) % 2) { r(X + 6, Y + 4, 4, 4, '#f2e6c8'); r(X + 7, Y + 5, 2, 2, '#e8443a'); }
   if (CRATE[ch]) {
     r(X + 1, Y + 1, 14, 10, '#7a4a20'); r(X + 2, Y + 2, 12, 8, '#b8773d'); r(X + 2, Y + 5, 12, 1, '#9a5f2c');
     ctx.drawImage(SP[CRATE[ch] + '_raw'], X + 4, Y + 1);
@@ -558,8 +680,52 @@ function drawBurger(x, y, c) {
   if (c.includes('meat')) { r(x, yy, 8, 2, '#7a4422'); r(x, yy + 1, 8, 1, '#5c3418'); yy += 2; }
   r(x, yy, 8, 1, '#d9913f'); r(x + 1, yy + 1, 6, 1, '#b8732e');
 }
+function drawTaco(x, y, c) {
+  r(x + 1, y + 2, 6, 1, c.includes('meat') ? '#7a4422' : '#f0d58a');
+  if (c.includes('onion')) { r(x + 2, y + 1, 1, 1, '#f3dcef'); r(x + 5, y + 2, 1, 1, '#f3dcef'); }
+  if (c.includes('tomato')) { r(x + 3, y + 1, 1, 1, '#e8443a'); r(x + 6, y + 2, 1, 1, '#e8443a'); }
+  r(x, y + 3, 8, 1, '#f0d58a'); r(x, y + 4, 8, 2, '#e8c46a'); r(x + 1, y + 6, 6, 1, '#c9a24a');
+  r(x + 2, y + 4, 1, 1, '#c9a24a'); r(x + 5, y + 5, 1, 1, '#c9a24a');
+}
+function drawBurrito(x, y, c) {
+  r(x, y + 2, 8, 4, '#f0d58a'); r(x, y + 5, 8, 1, '#c9a24a'); r(x + 1, y + 1, 5, 1, '#f0d58a');
+  r(x + 2, y + 3, 1, 1, '#c9a24a'); r(x + 4, y + 4, 1, 1, '#c9a24a');
+  r(x + 6, y + 2, 2, 3, '#7a4422'); r(x + 7, y + 3, 1, 1, '#4a1f10');
+  if (c.includes('tomato')) r(x + 6, y + 4, 1, 1, '#e8443a');
+}
+function drawNigiri(x, y, c) {
+  r(x + 1, y + 4, 6, 3, '#fbfbf2'); r(x + 1, y + 6, 6, 1, '#d8d8c8');
+  let yy = 2;
+  if (c.includes('salmon')) { r(x, y + yy, 8, 2, '#ff8a5c'); r(x + 2, y + yy, 1, 2, '#ffd8c4'); r(x + 5, y + yy, 1, 2, '#ffd8c4'); yy -= 2; }
+  if (c.includes('shrimp')) { r(x, y + yy, 7, 2, '#ffa48a'); r(x + 1, y + yy, 1, 1, '#fff'); r(x + 4, y + yy, 1, 1, '#fff'); r(x + 7, y + yy, 1, 2, '#e8443a'); }
+}
+function drawMaki(x, y, c) {
+  const col = { salmon: '#ff8a5c', shrimp: '#ffa48a', cucumber: '#4caf3a' };
+  const f = c.filter(t => col[t]).map(t => col[t]); if (!f.length) f.push('#fbfbf2');
+  for (let i = 0; i < 2; i++) {
+    const xx = x + i * 4;
+    r(xx, y + 2, 4, 4, '#1d3a24'); r(xx + 1, y + 3, 2, 2, '#fbfbf2');
+    r(xx + 1, y + 3, 1, 1, f[i % f.length]); r(xx + 2, y + 4, 1, 1, f[(i + 1) % f.length]);
+  }
+}
+function drawPasta(x, y, c) {
+  r(x + 1, y + 3, 6, 3, '#f3d27a'); r(x, y + 4, 8, 2, '#f3d27a');
+  r(x + 1, y + 4, 1, 1, '#d8b050'); r(x + 4, y + 5, 1, 1, '#d8b050'); r(x + 6, y + 4, 1, 1, '#d8b050');
+  if (c.includes('tomato')) { r(x + 2, y + 3, 4, 2, '#d8352a'); r(x + 3, y + 2, 2, 1, '#d8352a'); }
+  if (c.includes('cheese')) { r(x + 2, y + 2, 1, 1, '#fff6c8'); r(x + 5, y + 3, 1, 1, '#fff6c8'); r(x + 3, y + 4, 1, 1, '#fff6c8'); }
+  if (c.includes('basil')) { r(x + 4, y + 1, 2, 1, '#3d9a35'); r(x + 5, y + 2, 1, 1, '#2a6e24'); }
+}
+function drawBruschetta(x, y, c) {
+  r(x, y + 3, 8, 1, '#f0b860'); r(x, y + 4, 8, 2, '#d9913f'); r(x + 1, y + 6, 6, 1, '#b8732e');
+  if (c.includes('tomato')) { r(x + 1, y + 2, 2, 1, '#e8443a'); r(x + 4, y + 2, 2, 1, '#e8443a'); r(x + 6, y + 3, 1, 1, '#e8443a'); }
+  if (c.includes('cheese')) { r(x + 3, y + 2, 1, 1, '#fff6c8'); }
+  if (c.includes('basil')) { r(x + 3, y + 1, 2, 1, '#3d9a35'); r(x + 6, y + 2, 1, 1, '#3d9a35'); }
+}
 function drawDish(x, y, c) {   // 8x8 aprox
-  if (c.includes('bread')) { drawBurger(x, y, c); return; }
+  if (c.includes('tortilla')) { (c.includes('beans') ? drawBurrito : drawTaco)(x, y, c); return; }
+  if (c.includes('rice')) { (c.includes('nori') ? drawMaki : drawNigiri)(x, y, c); return; }
+  if (c.includes('pasta')) { drawPasta(x, y, c); return; }
+  if (c.includes('bread')) { (LV.id === 'it' ? drawBruschetta : drawBurger)(x, y, c); return; }
   const offs = [[[0, 0]], [[-2, 0], [2, -1]], [[-3, 0], [3, 0], [0, -2]], [[-3, -2], [3, -2], [-3, 1], [3, 1]]][c.length - 1];
   c.forEach((t, i) => ctx.drawImage(SP[READY[t]], x + offs[i][0], y + offs[i][1]));
 }
@@ -634,8 +800,8 @@ function render(dt) {
     const X = tx * T, Y = ty * T + HUD;
     drawItem(it, X + 4, Y + 2);
     if (tile(tx, ty) === 'K' && it.s === 'raw' && it.p > 0) bar(X + 2, Y - 3, 12, it.p, '#4caf3a');
-    if (tile(tx, ty) === 'F' && it.t === 'meat') {
-      if (it.s === 'chop') bar(X + 2, Y - 3, 12, it.k, '#ffc93c');
+    if (tile(tx, ty) === 'F' && canCook(it)) {
+      if (it.s !== 'cook' && it.s !== 'burn') bar(X + 2, Y - 3, 12, it.k, '#ffc93c');
       else if (it.s === 'cook') {
         const danger = (it.k - 1) / 1.4;
         bar(X + 2, Y - 3, 12, 1, danger > .5 && Math.floor(performance.now() / 150) % 2 ? '#e8443a' : '#4caf3a');
@@ -684,7 +850,8 @@ function render(dt) {
     r(0, HUD, VW, VH - HUD, 'rgba(30,18,38,.45)');
     const c = Math.ceil(countdown);
     text(c > 0 ? String(Math.min(3, c)) : 'YA!', VW / 2, VH / 2 + 4, '#ffc93c', 24, 'center');
-    text('Zairene y el Palomito', VW / 2, VH / 2 + 36, '#ff7eb6', 6, 'center');
+    text(LV.n, VW / 2, VH / 2 + 36, '#ff7eb6', 8, 'center');
+    text('Zairene y el Palomito', VW / 2, VH / 2 + 50, '#fff4e0', 6, 'center');
   }
 }
 
@@ -699,6 +866,8 @@ function setPhase(p) {
   ['menu', 'lobby', 'end'].forEach(id => $(id).classList.toggle('hidden', id !== p));
   $('help').classList.add('hidden');
   $('touch').classList.toggle('hidden', !(isTouch && p === 'play'));
+  $('lobbyLv').classList.toggle('hidden', !isHost);
+  $('endLv').classList.toggle('hidden', !isHost);
   if (p === 'end') showEnd();
   if (p === 'menu') { players = []; }
   resize();
@@ -724,6 +893,22 @@ function drawPreview(id, ch) {
   const c = $(id), x = c.getContext('2d'); x.clearRect(0, 0, 12, 16); x.drawImage(SP[ch], 0, 0);
 }
 drawPreview('cvz', 'z'); drawPreview('cvp', 'p');
+
+// selector de cocina (menú, sala y fin de ronda)
+const lvBoxes = document.querySelectorAll('[data-lv]');
+lvBoxes.forEach(box => {
+  box.innerHTML = LEVELS.map((l, i) => `<button data-i="${i}"><span class="e">${l.e}</span>${l.n}</button>`).join('');
+  box.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+    if (!isHost && phase !== 'menu') return;
+    ensureAudio(); play('pick'); setLevel(+b.dataset.i);
+    try { localStorage.setItem('cocina-lv', levelIdx); } catch (e) { }
+  }));
+});
+function refreshLevelUI() {
+  lvBoxes.forEach(box => box.querySelectorAll('button').forEach(b => b.classList.toggle('sel', +b.dataset.i === levelIdx)));
+  $('helpRec').innerHTML = '<b>' + LV.e + ' ' + LV.n + ':</b><br>' + RECIPES.map(rc => rc.e + ' ' + rc.n + ': ' + rc.ing.map(t => ING[t].n).join(' + ')).join('<br>');
+}
+try { setLevel(+localStorage.getItem('cocina-lv') || 0); } catch (e) { setLevel(0); }
 document.querySelectorAll('.char').forEach(b => b.addEventListener('click', () => {
   myChar = b.dataset.ch;
   document.querySelectorAll('.char').forEach(o => o.classList.toggle('sel', o === b));
@@ -828,3 +1013,12 @@ function loop(ts) {
 }
 if (document.fonts && document.fonts.load) document.fonts.load("8px 'Press Start 2P'");
 requestAnimationFrame(loop);
+
+/* ======================= DESCARGAR (instalar como app, PWA) ======================= */
+if ('serviceWorker' in navigator && location.protocol !== 'file:') addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => { }));
+const standalone = matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches || navigator.standalone;
+let installEv = null;
+addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEv = e; $('bInstall').classList.remove('hidden'); });
+$('bInstall').onclick = async () => { if (!installEv) return; installEv.prompt(); try { await installEv.userChoice; } catch (e) { } installEv = null; $('bInstall').classList.add('hidden'); };
+addEventListener('appinstalled', () => { $('bInstall').classList.add('hidden'); setStatus('¡Descargado! Ábrelo desde su ícono.'); });
+if (!standalone && /iPhone|iPad|iPod/.test(navigator.userAgent)) $('iosHint').classList.remove('hidden');
